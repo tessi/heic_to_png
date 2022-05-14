@@ -1,4 +1,4 @@
-use image::{ImageBuffer, ImageFormat, Rgba};
+use image::{ImageBuffer, ImageFormat};
 use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 use rustler::Binary;
 use std::io::Cursor;
@@ -32,17 +32,15 @@ fn heic_to_png(image: Binary) -> Result<Vec<u8>, String> {
     let bytes = if bytes_per_component <= 1 {
         // uses 1 byte per color
         if alpha {
-            let image = ImageBuffer::from_fn(width, height, |x, y| {
-                let i = y as usize * stride + x as usize * 4;
-                image::Rgba([pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]])
-            });
-            serialize_image_buffer_u8(image)?
+            let image: ImageBuffer<image::Rgba<u8>, &[u8]> =
+                ImageBuffer::from_raw(width, height, pixels)
+                    .ok_or("could not convert rgba pixel array")?;
+            serialize_image_buffer(image)?
         } else {
-            let image = ImageBuffer::from_fn(width, height, |x, y| {
-                let i = y as usize * stride + x as usize * 3;
-                image::Rgba([pixels[i], pixels[i + 1], pixels[i + 2], u8::MAX])
-            });
-            serialize_image_buffer_u8(image)?
+            let image: ImageBuffer<image::Rgb<u8>, &[u8]> =
+                ImageBuffer::from_raw(width, height, pixels)
+                    .ok_or("could not convert rgba pixel array")?;
+            serialize_image_buffer(image)?
         }
     } else {
         // uses 2 bytes per color
@@ -57,7 +55,7 @@ fn heic_to_png(image: Binary) -> Result<Vec<u8>, String> {
                     ((pixels[i + 7] as u16) << 8 | (pixels[i + 6] as u16)) << shift,
                 ])
             });
-            serialize_image_buffer_u16(image)?
+            serialize_image_buffer(image)?
         } else {
             let image = ImageBuffer::from_fn(width, height, |x, y| {
                 let i = y as usize * stride + x as usize * 3 * 2;
@@ -68,23 +66,19 @@ fn heic_to_png(image: Binary) -> Result<Vec<u8>, String> {
                     ((u8::MAX as u16) << 8 | (u8::MAX as u16)) << shift,
                 ])
             });
-            serialize_image_buffer_u16(image)?
+            serialize_image_buffer(image)?
         }
     };
     Ok(bytes)
 }
 
-fn serialize_image_buffer_u8(image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<Vec<u8>, String> {
-    let mut buffer = BufWriter::new(Cursor::new(vec![]));
-    image
-        .write_to(&mut buffer, ImageFormat::Png)
-        .map_err(stringify)?;
-    buffer.flush().map_err(stringify)?;
-    let bytes = buffer.into_inner().map_err(stringify)?.into_inner();
-    Ok(bytes)
-}
-
-fn serialize_image_buffer_u16(image: ImageBuffer<Rgba<u16>, Vec<u16>>) -> Result<Vec<u8>, String> {
+fn serialize_image_buffer<P: image::PixelWithColorType, Container>(
+    image: ImageBuffer<P, Container>,
+) -> Result<Vec<u8>, String>
+where
+    [P::Subpixel]: image::EncodableLayout,
+    Container: std::ops::Deref<Target = [P::Subpixel]>,
+{
     let mut buffer = BufWriter::new(Cursor::new(vec![]));
     image
         .write_to(&mut buffer, ImageFormat::Png)
